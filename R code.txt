@@ -1,0 +1,461 @@
+
+#1. Example code for spatial distributions of PMNP CSGR and HNF CSGR.
+# Fig. 3 CSGR maps with horizontal lollipop insets
+# PMNP and HNF
+# =========================================================
+
+library(tidyverse)
+library(ggplot2)
+library(maps)
+library(cowplot)
+library(grid)
+
+# ===============================
+# (1). Input files
+# ===============================
+
+pmnp_file <- "PMNP-CSGR-data.txt"
+hnf_file  <- "HNF-CSGR-data.txt"
+
+out_dir <- "Fig3_CSGR_maps_with_lollipop"
+dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
+# ===============================
+# (2). Read data
+# ===============================
+
+pmnp <- read.delim(pmnp_file, check.names = FALSE, stringsAsFactors = FALSE)
+hnf  <- read.delim(hnf_file,  check.names = FALSE, stringsAsFactors = FALSE)
+
+dat <- bind_rows(pmnp, hnf) %>%
+  mutate(
+    longitude = as.numeric(longitude),
+    latitude  = as.numeric(latitude),
+    GR        = as.numeric(GR),
+    Depth     = factor(Depth, levels = c("Surface", "DCM")),
+    Current   = factor(Current, levels = c("SCSW", "KW")),
+    Trophic   = factor(Trophic, levels = c("PMNP", "HNF"))
+  ) %>%
+  filter(
+    Depth %in% c("Surface", "DCM"),
+    is.finite(longitude),
+    is.finite(latitude),
+    is.finite(GR)
+  )
+
+# ===============================
+# (3). Colors
+# ===============================
+
+cols <- list(
+  PMNP = list(fill = "#D85A4F", edge = "#8E302A"),
+  HNF  = list(fill = "#2F78B7", edge = "#1D4B72")
+)
+
+# ===============================
+# (4). Shared bubble-size scale
+# ===============================
+
+size_upper <- ceiling(max(dat$GR, na.rm = TRUE) / 10) * 10
+
+size_limits <- c(0, size_upper)
+size_breaks <- c(10, 20, 30, 40)
+size_breaks <- size_breaks[size_breaks <= size_upper]
+
+max_circle_size <- 6.2
+
+# ===============================
+# (5). Mean GR for lollipop inset
+# ===============================
+
+mean_gr <- dat %>%
+  group_by(Trophic, Depth, Current) %>%
+  summarise(
+    mean_GR = mean(GR, na.rm = TRUE),
+    se_GR = sd(GR, na.rm = TRUE) / sqrt(n()),
+    n = n(),
+    .groups = "drop"
+  )
+
+global_lollipop_xmax <- max(mean_gr$mean_GR, na.rm = TRUE) * 1.25
+
+# ===============================
+# (6). Horizontal lollipop inset
+# ===============================
+
+make_lollipop <- function(trophic_i, depth_i) {
+  
+  cc <- cols[[trophic_i]]
+  
+  d <- mean_gr %>%
+    filter(Trophic == trophic_i, Depth == depth_i) %>%
+    mutate(Current = factor(Current, levels = c("KW", "SCSW")))
+  
+  ggplot(d, aes(y = Current, x = mean_GR)) +
+    geom_segment(
+      aes(y = Current, yend = Current, x = 0, xend = mean_GR),
+      linewidth = 0.45,
+      color = "grey45"
+    ) +
+    geom_point(
+      shape = 21,
+      size = 2.6,
+      fill = cc$fill,
+      color = cc$edge,
+      stroke = 0.45
+    ) +
+    geom_text(
+      aes(label = sprintf("%.1f", mean_GR)),
+      hjust = -0.25,
+      size = 4,
+      family = "serif",face = "bold"
+    ) +
+    scale_x_continuous(
+      limits = c(0, global_lollipop_xmax),
+      expand = c(0, 0)
+    ) +
+    labs(x = NULL, y = NULL) +
+    theme_classic(base_family = "serif", base_size = 7) +
+    theme(
+      axis.text.y = element_text(size = 9, color = "black",face = "bold"),
+      axis.text.x = element_text(size = 9, color = "black",face = "bold"),
+      axis.ticks = element_line(linewidth = 0.25),
+      axis.line = element_line(linewidth = 0.25),
+      panel.background = element_rect(fill = "white", color = NA),
+      plot.background = element_rect(
+        fill = "white",
+        color = NA,
+        linewidth = 0.25
+      ),
+      plot.margin = margin(2, 4, 2, 3)
+    )
+}
+
+# ===============================
+# (7). Violin plot for pooled CSGR
+# ===============================
+
+make_violin <- function(trophic_i, label_i) {
+  
+  cc <- cols[[trophic_i]]
+  
+  d <- dat %>%
+    filter(Trophic == trophic_i)
+  
+  p_value <- wilcox.test(GR ~ Current, data = d, exact = FALSE)$p.value
+  
+  sig_label <- case_when(
+    p_value < 0.001 ~ "***",
+    p_value < 0.01 ~ "**",
+    p_value < 0.05 ~ "*",
+    TRUE ~ "ns"
+  )
+  
+  ymax <- max(d$GR, na.rm = TRUE) * 1.15
+  
+  ggplot(d, aes(x = Current, y = GR, fill = Current)) +
+    geom_violin(
+      width = 0.85,
+      alpha = 0.35,
+      color = NA,
+      trim = FALSE
+    ) +
+    geom_boxplot(
+      width = 0.28,
+      outlier.shape = NA,
+      fill = "white",
+      color = cc$edge,
+      linewidth = 0.55
+    ) +
+    geom_jitter(
+      width = 0.12,
+      size = 1.4,
+      alpha = 0.75,
+      color = cc$fill
+    ) +
+    annotate(
+      "segment",
+      x = 1, xend = 2,
+      y = ymax, yend = ymax,
+      linewidth = 0.45
+    ) +
+    annotate(
+      "text",
+      x = 1.5,
+      y = ymax * 1.03,
+      label = sig_label,
+      family = "serif",
+      fontface = "bold",
+      size = 4.3
+    ) +
+    annotate(
+      "text",
+      x = 0.62,
+      y = ymax * 1.12,
+      label = label_i,
+      family = "serif",
+      fontface = "bold",
+      size = 4.6,
+      hjust = 0
+    ) +
+    annotate(
+      "label",
+      x = 1.5,
+      y = ymax * 1.20,
+      label = trophic_i,
+      family = "serif",
+      fontface = "bold",
+      size = 4,
+      label.size = NA,
+      fill = "grey78"
+    ) +
+    scale_fill_manual(values = c(
+      SCSW = alpha(cc$fill, 0.35),
+      KW   = alpha(cc$fill, 0.75)
+    )) +
+    scale_y_continuous(expand = expansion(mult = c(0.02, 0.18))) +
+    labs(
+      x = NULL,
+      y = expression("CSGR (bact. cell"^-1~h^-1*")")
+    ) +
+    theme_classic(base_family = "serif", base_size = 11) +
+    theme(
+      legend.position = "none",
+      axis.text = element_text(color = "black", size = 14),
+      axis.title.y = element_text(size = 16),
+      axis.line = element_line(linewidth = 0.45),
+      axis.ticks = element_line(linewidth = 0.4),
+      plot.margin = margin(6, 6, 6, 6)
+    )
+}
+
+# ===============================
+# (8). Map background
+# ===============================
+
+world <- map_data("world")
+
+# ===============================
+# (9). Map panel with inset
+# ===============================
+
+make_map_panel <- function(trophic_i, depth_i, label_i, show_size_legend = FALSE) {
+  
+  d <- dat %>%
+    filter(Trophic == trophic_i, Depth == depth_i)
+  
+  cc <- cols[[trophic_i]]
+  
+  base_map <- ggplot() +
+    geom_polygon(
+      data = world,
+      aes(x = long, y = lat, group = group),
+      fill = "#D9D9D6",
+      color = "white",
+      linewidth = 0.12
+    ) +
+    geom_point(
+      data = d,
+      aes(x = longitude, y = latitude, size = GR),
+      shape = 21,
+      fill = cc$fill,
+      color = cc$edge,
+      stroke = 0.35,
+      alpha = 0.72
+    ) +
+    annotate(
+      "text",
+      x = 105.75, y = 25.15,
+      label = label_i,
+      family = "serif",
+      fontface = "bold",
+      size = 4.5,
+      hjust = 0
+    ) +
+    annotate(
+      "text",
+      x = 106.35, y = 24.00,
+      label = depth_i,
+      family = "serif",
+      fontface = "bold",
+      size = 3.6,
+      hjust = 0
+    ) +
+    scale_size_area(
+      name = expression("CSGR"~"(bact. cell"^-1~h^-1*")"),
+      limits = size_limits,
+      breaks = size_breaks,
+      max_size = max_circle_size
+    ) +
+    scale_x_continuous(
+      breaks = c(110, 115, 120, 125),
+      labels = function(x) paste0(x, "\u00B0E"),
+      expand = c(0, 0)
+    ) +
+    scale_y_continuous(
+      breaks = c(10, 15, 20, 25),
+      labels = function(y) paste0(y, "\u00B0N"),
+      expand = c(0, 0)
+    ) +
+    coord_quickmap(
+      xlim = c(105.2, 125.8),
+      ylim = c(6.0, 25.7),
+      expand = FALSE,
+      clip = "on"
+    ) +
+    guides(
+      size = if (show_size_legend) {
+        guide_legend(
+          override.aes = list(
+            shape = 21,
+            fill = "white",
+            color = "black",
+            alpha = 1
+          )
+        )
+      } else {
+        "none"
+      }
+    ) +
+    theme_classic(base_family = "serif", base_size = 9) +
+    theme(
+      axis.title = element_blank(),
+      axis.text = element_text(color = "black", size = 14),
+      axis.line = element_blank(),
+      axis.ticks = element_line(linewidth = 0.35),
+      panel.border = element_rect(fill = NA, color = "black", linewidth = 0.55),
+      panel.grid.major = element_line(color = "grey88", linewidth = 0.2),
+      panel.grid.minor = element_blank(),
+      plot.background = element_rect(fill = "white", color = NA),
+      panel.background = element_rect(fill = "white", color = NA),
+      legend.position = if (show_size_legend) "right" else "none",
+      legend.title = element_text(size = 8, family = "serif"),
+      legend.text = element_text(size = 8, family = "serif"),
+      legend.key = element_blank(),
+      plot.margin = margin(4, 4, 4, 4)
+    )
+  
+  inset <- make_lollipop(trophic_i, depth_i)
+  
+  ggdraw(base_map) +
+    draw_plot(
+      inset,
+      x = 0.6,
+      y = 0.08,
+      width = 0.35,
+      height = 0.22
+    )
+}
+
+# ===============================
+# (10). Generate panels
+# ===============================
+
+p_a <- make_violin("PMNP", "(a)")
+p_b <- make_violin("HNF", "(b)")
+
+p_c <- make_map_panel("PMNP", "Surface", "(c)", show_size_legend = TRUE)
+p_d <- make_map_panel("HNF",  "Surface", "(d)", show_size_legend = TRUE)
+p_e <- make_map_panel("PMNP", "DCM",     "(e)", show_size_legend = TRUE)
+p_f <- make_map_panel("HNF",  "DCM",     "(f)", show_size_legend = TRUE)
+
+# Extract size legend
+legend_size <- get_legend(
+  make_map_panel("HNF", "Surface", "(d)", show_size_legend = TRUE)
+)
+
+# Remove legend from p_d for layout
+#p_d <- make_map_panel("HNF", "Surface", "(d)", show_size_legend = FALSE)
+
+# ===============================
+# (11). Combine figure
+# ===============================
+
+top_row <- plot_grid(
+  p_a, p_b,
+  nrow = 1,
+  align = "h",
+  rel_widths = c(1, 1)
+)
+
+map_row1 <- plot_grid(
+  p_c, p_d,
+  nrow = 1,
+  align = "hv",
+  rel_widths = c(1, 1)
+)
+
+map_row2 <- plot_grid(
+  p_e, p_f,
+  nrow = 1,
+  align = "hv",
+  rel_widths = c(1, 1)
+)
+
+map_block <- plot_grid(
+  map_row1,
+  map_row2,
+  ncol = 1,
+  rel_heights = c(1, 1)
+)
+
+main_block <- plot_grid(
+  top_row,
+  map_block,
+  ncol = 1,
+  rel_heights = c(0.55, 1.45)
+)
+
+final_fig <- plot_grid(
+  main_block,
+  legend_size,
+  nrow = 1,
+  rel_widths = c(1, 0.12)
+)
+final_fig
+# ===============================
+# (12). Save
+# ===============================
+
+ggsave(
+  file.path(out_dir, "Fig3.pdf"),
+  final_fig,
+  width = 844/90,
+  height = 954/90,
+  bg = "white"
+)
+# ===============================
+
+
+##2. SEM Model
+##Prepare and preprocess the data required for SEM modeling
+##read data
+library(piecewiseSEM)
+dat <- read.delim("PMNP.pooled.data.txt",header=T,row.names=1)
+##Standardized data
+dat.scaled <- as.data.frame(scale(dat))
+##Initial model
+microbe.list <- list(
+  lm1 <- lm(PMNP ~DIN + DRP + Synechococcus + Prochlorococcus + Bacteria + Temperature + Salinity, na.action = na.omit, data = dat.scaled),
+  lm2 <- lm(Bacteria ~ DIN + DRP + Temperature + Salinity, na.action = na.omit, data = dat.scaled),
+  lm3 <- lm(Synechococcus~  DIN + DRP + Temperature + Salinity, na.action = na.omit, data = dat.scaled),
+  lm4 <- lm(Prochlorococcus~  DIN + DRP + Temperature + Salinity, na.action = na.omit, data = dat.scaled)
+)
+microbe.psem <- as.psem(microbe.list)
+##Model results extraction
+(new.summary <- summary(microbe.psem, .progressBar = F))
+
+##Based on the results, non-significant and unimportant paths were removed to obtain the final optimized model.
+##Optimized model
+microbe.list2 <- list(
+  lm1 <- lm(PMNP ~DIN + DRP +  Prochlorococcus + Bacteria + Temperature , na.action = na.omit, data = dat.scaled),
+  lm2 <- lm(Bacteria ~ DIN + DRP + Temperature, na.action = na.omit, data = dat.scaled),
+  lm4 <- lm(Prochlorococcus~  DIN + DRP + Temperature , na.action = na.omit, data = dat.scaled),
+)
+microbe.psem2 <- as.psem(microbe.list2)
+(new.summary2 <- summary(microbe.psem2, .progressBar = F))
+##Based on the results, the SEM model diagram was prepared using PowerPoint.
+##Other SEM Models were generated following this code as a template.
+
+
+
