@@ -1,0 +1,1 @@
+This dataset provides the original measurements supporting the analyses presented in the manuscript entitled “Kuroshio intrusion reorganizes layer-specific partitioning of bacterivory between phago-mixotrophic nanophytoplankton and heterotrophic nanoflagellates in the South China Sea”
